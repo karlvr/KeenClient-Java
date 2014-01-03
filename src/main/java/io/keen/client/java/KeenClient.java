@@ -33,18 +33,46 @@ import java.util.concurrent.TimeUnit;
 public class KeenClient {
 
     static final ObjectMapper MAPPER;
-    static final ExecutorService EXECUTOR_SERVICE;
+    static ExecutorService EXECUTOR_SERVICE;
 
     static {
         MAPPER = new ObjectMapper();
         MAPPER.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
 
-        EXECUTOR_SERVICE = Executors.newFixedThreadPool(KeenConfig.NUM_THREADS_FOR_HTTP_REQUESTS);
+        initialize();
     }
 
-    private enum ClientSingleton {
+    enum ClientSingleton {
         INSTANCE;
-        private KeenClient client;
+        KeenClient client;
+    }
+
+    /**
+     * Use this to attempt to initialize the client from environment variables.
+     */
+    public static void initialize() {
+        initialize(new Environment());
+    }
+
+    /**
+     * Used for tests.
+     */
+    static void initialize(Environment env) {
+        if (env.getKeenProjectId() != null) {
+            KeenClient.initialize(env.getKeenProjectId(),
+                                  env.getKeenWriteKey(),
+                                  env.getKeenReadKey());
+        }
+    }
+
+    protected ExecutorService createExecutorService() {
+        return Executors.newFixedThreadPool(KeenConfig.NUM_THREADS_FOR_HTTP_REQUESTS);
+    }
+
+    private void checkExecutorService() {
+        if (EXECUTOR_SERVICE == null || EXECUTOR_SERVICE.isShutdown()) {
+            EXECUTOR_SERVICE = createExecutorService();
+        }
     }
 
     /**
@@ -80,6 +108,7 @@ public class KeenClient {
     private final String projectId;
     private final String writeKey;
     private final String readKey;
+    private String baseUrl;
     private GlobalPropertiesEvaluator globalPropertiesEvaluator;
     private Map<String, Object> globalProperties;
 
@@ -99,8 +128,11 @@ public class KeenClient {
         this.projectId = projectId;
         this.writeKey = writeKey;
         this.readKey = readKey;
+        this.baseUrl = KeenConstants.SERVER_ADDRESS;
         this.globalPropertiesEvaluator = null;
         this.globalProperties = null;
+
+        checkExecutorService();
     }
 
     /////////////////////////////////////////////
@@ -264,6 +296,26 @@ public class KeenClient {
     }
 
     /**
+     * Getter for the base API URL associated with this instance of the {@link KeenClient}.
+     *
+     * @return the base API URL
+     */
+    public String getBaseUrl() {
+        return baseUrl;
+    }
+
+    /**
+     * Setter for the base API URL associated with this instance of the {@link KeenClient}.
+     * <p/>
+     * Use this if you want to disable SSL.
+     *
+     * @param baseUrl the new base URL (i.e. 'http://api.keen.io')
+     */
+    public void setBaseUrl(String baseUrl) {
+        this.baseUrl = baseUrl;
+    }
+
+    /**
      * Getter for the {@link GlobalPropertiesEvaluator} associated with this instance of the {@link KeenClient}.
      *
      * @return the {@link GlobalPropertiesEvaluator}
@@ -365,23 +417,26 @@ public class KeenClient {
     public void processRunnableInNewThread(Runnable runnable) {
         EXECUTOR_SERVICE.submit(runnable);
     }
-    
+
     /**
-     * Shutdown the thread pool, with optional wait for all running threads to complete.
+     * Shutdown the shared thread pool, with optional wait for all running threads to
+     * complete.
      * <p/>
-     * New events submitted using addEvent will be rejected with a RejectedExecutionException.
-     * 
-     * @param timeout A non-zero timeout in millis will block the current thread while waiting for the current events to be
-     * 				  completed.
+     * New events submitted using addEvent will be rejected with a
+     * RejectedExecutionException on all currently instantiated KeenClients.
+     *
+     * @param timeout
+     *            A non-zero timeout in millis will block the current thread
+     *            while waiting for the current events to be completed.
+     * @throws InterruptedException if interrupted while waiting
      */
-    public void shutdown(long timeout) {
-    	EXECUTOR_SERVICE.shutdown();
-    	if (timeout > 0) {
-    		try {
-				EXECUTOR_SERVICE.awaitTermination(timeout, TimeUnit.MILLISECONDS);
-			} catch (InterruptedException e) {
-			}
-    	}
+    public static void shutdown(long timeout) throws InterruptedException {
+        if (EXECUTOR_SERVICE != null) {
+            EXECUTOR_SERVICE.shutdown();
+            if (timeout > 0) {
+                EXECUTOR_SERVICE.awaitTermination(timeout, TimeUnit.MILLISECONDS);
+            }
+        }
     }
 
 }

@@ -14,6 +14,9 @@ import java.util.Map;
  * @since 1.0.0
  */
 class KeenHttpRequestRunnable implements Runnable {
+    private static final int READ_TIMEOUT = 60000;
+    private static final int CONNECT_TIMEOUT = 60000;
+    
     private final KeenClient keenClient;
     private final String eventCollection;
     private final Map<String, Object> event;
@@ -30,7 +33,12 @@ class KeenHttpRequestRunnable implements Runnable {
     public void run() {
         try {
             HttpURLConnection connection = sendEvent(this.eventCollection, this.event);
-            handleResult(connection.getInputStream(), connection.getResponseCode(), callback);
+            InputStream inputStream = connection.getInputStream();
+            try {
+                handleResult(inputStream, connection.getResponseCode(), callback);
+            } finally {
+                inputStream.close();
+            }
         } catch (IOException e) {
             KeenLogging.log("There was an error while sending events to the Keen API.");
             String stackTrace = KeenUtils.getStackTraceFromThrowable(e);
@@ -43,7 +51,7 @@ class KeenHttpRequestRunnable implements Runnable {
 
     HttpURLConnection sendEvent(String eventCollection, Map<String, Object> event) throws IOException {
         // just using basic JDK HTTP library
-        String urlString = String.format("%s/%s/projects/%s/events/%s", KeenConstants.SERVER_ADDRESS,
+        String urlString = String.format("%s/%s/projects/%s/events/%s", keenClient.getBaseUrl(),
                 KeenConstants.API_VERSION, keenClient.getProjectId(), eventCollection);
         URL url = new URL(urlString);
 
@@ -53,6 +61,8 @@ class KeenHttpRequestRunnable implements Runnable {
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("Content-Type", "application/json");
         connection.setRequestProperty("Authorization", keenClient.getWriteKey());
+        connection.setReadTimeout(READ_TIMEOUT);
+        connection.setConnectTimeout(CONNECT_TIMEOUT);
         // we're writing
         connection.setDoOutput(true);
         OutputStream out = connection.getOutputStream();

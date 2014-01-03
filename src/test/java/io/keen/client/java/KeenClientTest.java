@@ -33,6 +33,53 @@ public class KeenClientTest {
     }
 
     @Test
+    public void testEnvironment() {
+        try {
+            KeenClient.client();
+            fail("Shouldn't be able to get client if no environment set.");
+        } catch (IllegalStateException e) {
+        }
+
+        try {
+            KeenClient.initialize(getEnvironment(null, null, null));
+            KeenClient.client();
+            fail("Shouldn't be able to get client if bad environment used.");
+        } catch (IllegalStateException e) {
+        }
+
+        try {
+            KeenClient.initialize(getEnvironment(null, "abc", "def"));
+            KeenClient.client();
+            fail("Shouldn't be able to get client if no project id in environment.");
+        } catch (IllegalStateException e) {
+        }
+
+        KeenClient.initialize(getEnvironment("project_id", "abc", "def"));
+        doClientAssertions("project_id", "abc", "def", KeenClient.client());
+
+        KeenClient.ClientSingleton.INSTANCE.client = null;
+    }
+
+    private Environment getEnvironment(final String projectId, final String writeKey, final String readKey) {
+        return new Environment() {
+            @Override
+            public String getKeenProjectId() {
+                return projectId;
+            }
+
+            @Override
+            public String getKeenWriteKey() {
+                return writeKey;
+            }
+
+            @Override
+            public String getKeenReadKey() {
+                return readKey;
+            }
+        };
+    }
+
+    @Test
     public void testKeenClientConstructor() {
         runKeenClientConstructorTest(null, null, null, true, "null project id", "Invalid project id specified: null");
         runKeenClientConstructorTest("", null, null, true, "empty project id", "Invalid project id specified: ");
@@ -162,7 +209,7 @@ public class KeenClientTest {
 
     @Test
     public void testAddEvent() throws KeenException, IOException, InterruptedException {
-        // this is the only test that does a full round-trip to the real API.
+        // does a full round-trip to the real API.
         KeenClient client = getClient();
         Map<String, Object> event = new HashMap<String, Object>();
         event.put("test key", "test value");
@@ -181,6 +228,59 @@ public class KeenClientTest {
         });
         // make sure the event was sent to Keen IO
         latch.await(2, TimeUnit.SECONDS);
+    }
+
+    @Test
+    public void testAddEventNonSSL() throws KeenException, IOException, InterruptedException {
+        // does a full round-trip to the real API.
+        KeenClient client = getClient();
+        client.setBaseUrl("http://api.keen.io");
+        Map<String, Object> event = new HashMap<String, Object>();
+        event.put("test key", "test value");
+        // setup a latch for our callback so we can verify the server got the request
+        final CountDownLatch latch = new CountDownLatch(1);
+        // send the event
+        client.addEvent("foo", event, null, new AddEventCallback() {
+            @Override
+            public void onSuccess() {
+                latch.countDown();
+            }
+
+            @Override
+            public void onError(String responseBody) {
+            }
+        });
+        // make sure the event was sent to Keen IO
+        latch.await(2, TimeUnit.SECONDS);
+    }
+    
+    @Test
+    public void testShutdown() throws KeenException, InterruptedException {
+        getClient();
+        
+        assertFalse("Executor service should not be shutdown at the beginning of the test", KeenClient.EXECUTOR_SERVICE.isShutdown());
+        
+        KeenClient.shutdown(2000);
+        
+        assertTrue("Executor service should be shutdown at the end of the test", KeenClient.EXECUTOR_SERVICE.isShutdown());
+        assertTrue("Executor service should be terminated at the end of the test", KeenClient.EXECUTOR_SERVICE.isTerminated());
+    }
+    
+    /**
+     * It is important to have two shutdown tests so we test that the KeenClient recovers after a shutdown.
+     * @throws KeenException
+     * @throws InterruptedException
+     */
+    @Test
+    public void testShutdownNoWait() throws KeenException, InterruptedException {
+        getClient();
+        
+        assertFalse("Executor service should not be shutdown at the beginning of the test", KeenClient.EXECUTOR_SERVICE.isShutdown());
+        
+        KeenClient.shutdown(0);
+        
+        assertTrue("Executor service should be shutdown at the end of the test", KeenClient.EXECUTOR_SERVICE.isShutdown());
+        // Don't test termination here as it is a race condition whether the EXECUTOR_SERVICE will be terminated or not.
     }
 
     @Test
